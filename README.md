@@ -8,7 +8,7 @@ variational disentanglement approach to semi-parametrically
 learn from rare events in heavily imbalanced classification
 problems.
 
-![Estimation of the tail](figures/tail_illustration.pdf)
+[Estimation of the tail](figures/tail_illustration.pdf)
 Left: Distribution of a two-dimensional latent
 space z where the long tail associates with higher risk. Right:
 Tail estimations with different schemes for the long-tailed
@@ -22,7 +22,7 @@ The algorithm is built with:
 
 * Python (version 3.7 or higher)
 * Numpy (version 1.16 or higher)
-* PyTorch (version 1.13.1)
+* PyTorch (version 1.3.1)
 
 Clone the repository, e.g.:
 ```
