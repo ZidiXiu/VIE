@@ -1,53 +1,5 @@
 from __future__ import print_function
 
-import argparse
-parser = argparse.ArgumentParser(description='VIE simulation dataset training')
-
-parser.add_argument('--z_dim', default=4, type=int, help="dimension of latent space z, choose from 2,4,8")
-parser.add_argument('--random_numer', default=123, type=int, help='fix random number for data sampling')
-parser.add_argument('--device', default="cpu", type=str, help='choose from cuda or cpu')
-parser.add_argument('--epochs', default=200, type=int, metavar='N', help='number of total epochs to run')
-parser.add_argument('-b', '--batch-size', default=200, type=int,
-                    metavar='N',
-                    help='mini-batch size', dest='batch_size')
-parser.add_argument('--enc_lr', default=1e-4, type=float,
-                    metavar='LR', help='learning rate for encoder', dest='flow_lr')
-parser.add_argument('--dec_lr', default=1e-4, type=float,
-                    metavar='LR', help='learning rate for decoder')
-parser.add_argument('--nu_lr', default=1e-3, type=float,
-                    metavar='LR', help='learning rate for the critic network')
-parser.add_argument('--n_bins', default=100, type=int,
-                    metavar='N', help='number of bins to split to conduct numerical integration', dest='N')
-
-
-# parameter settings
-args = parser.parse_args()
-
-z_dim = arg.z_dim
-epochs = args.epochs
-flow_lr = args.flow_lr
-dec_lr = args.dec_lr
-nu_lr = args.nu_lr
-device = args.device
-rseed = args.random_number
-N = args.N
-batch_size = args.batch_size
-
-lambda_=[1.0, 1e-4, 1e-6]
-hidden_layer_MNN = [32,32]
-hidden_layers=[32,32]
-hidden_features = 32
-unroll_steps = 5
-nu_lambda=1.0
-
-u_bound = np.max([0.99, 1-event_rate])
-lower_bound = -5.0
-
-aggressive_flag = True
-aggressive_nu = True
-
-print parser.parse_args(['-a', '-bval', '-c', '3'])
-
 import math
 import os
 
@@ -90,7 +42,8 @@ Path(result_path_root).mkdir(parents=True, exist_ok=True)
 data_name = 'er01'
 cut_bound=0.14
 # lambda_=[1.0, 1e-3, 1e-5]
-
+lambda_=[1.0, 1e-4, 1e-6]
+hidden_layer_MNN = [32,32]
 
 seed=123
 
@@ -130,10 +83,17 @@ Path(plot_path).mkdir(parents=True, exist_ok=True)
 
 ########## Hyper-parameters##############
 model_name = 'VIE'
+z_dim = 4
+hidden_layers=[32,32]
+hidden_features = 32
 ncov = train['x'].shape[1]
 event_rate = train['e'].mean()
 eps_dim = np.int(ncov)
 input_size = ncov+eps_dim
+unroll_steps = 5
+nu_lambda=1.0
+epochs = 500
+batch_size = 200
 
 flow_path = result_path+"/saved_models/"+model_name+'_flow'+".pt"
 
@@ -149,24 +109,26 @@ training = True
 
 unroll_test = True
 
-
+u_bound = np.max([0.99, 1-event_rate])
+lower_bound = -5.0
+N = 100
 
 
 IAF_flow = IAF(input_size, z_dim=z_dim, h_dim=z_dim, hidden_layers=hidden_layers, hidden_features=hidden_features,nstep=5, device=device)
 decoder = Decoder(z_dim=z_dim, hidden_layer_MNN=hidden_layer_MNN,loglogLink=True)
-nu = Nu(z_dim=z_dim, ncov=ncov, hidden_layers=hidden_layers, marginal=True)
+nu = Nu(z_dim=z_dim, ncov=ncov, hidden_layers=[32,32], marginal=True)
 
 decoder.to(device)
 IAF_flow.to(device)
 nu.to(device)
 
 # define optimizer
+opt_flow = optim.Adam(IAF_flow.parameters(), lr=1e-4)
+opt_dec = optim.Adam(decoder.parameters(), lr=1e-4)
+opt_nu = optim.RMSprop( nu.parameters(), lr = 1e-3)
 
-opt_flow = optim.Adam(IAF_flow.parameters(), lr=flow_lr)
-opt_dec = optim.Adam(decoder.parameters(), lr=dec_lr )
-opt_nu = optim.RMSprop( nu.parameters(), lr = nu_lr)
-
-
+aggressive_flag = True
+aggressive_nu = True
 
 # consider normaliztion of inputs
 norm_mean = np.mean(train['x'][:,continuous_variables],axis=0)
