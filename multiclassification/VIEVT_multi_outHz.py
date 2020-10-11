@@ -19,6 +19,7 @@ from sklearn.metrics import precision_recall_curve
 from multiclassification.MonotonicNN_outHz import MyMonotoneNN_3f, MyMonotoneNN_2f
 from utils.distributions import mixed_loglikeli, loglog_function, sample_mixedGPD
 from utils.metrics import cross_entropy, get_predicted_label,  accuracy_per_class
+from model.networks.autoregressive import MADE
 
 class Encoder(nn.Module):
     def __init__(self, in_d, hidden_layers=[32,32], z_dim=4):
@@ -46,29 +47,20 @@ class Encoder(nn.Module):
         z = mu + eps_*stddev
         l = torch.distributions.Normal(mu, torch.exp(0.5 * logvar)).log_prob(z)
         #l = (stddev.log()+0.5*eps_.pow(2) + 0.5*(torch.tensor(2*math.pi).log()).to(z.device)).sum()
-        return z, l.sum(1)
+        return z, l.sum()
         
-    def forward(self,x,eps):
-        input_ = torch.cat((x, eps), dim=1)
+    def forward(self,x,eps=None):
+        if type(eps) != type(None):
+            input_= torch.cat((x, eps), dim=1)
+        else:
+            input_ = x
         output_ = self.net(input_)
 #         mu_, logvar_, h_ = torch.split(output_, self.z_dim)
         mu_, logvar_, h_ = torch.split(output_, self.z_dim, dim=1)
         
         z, l = self.reparametrize(mu_, logvar_)
-#         self._loglikeli = l
-        # output z and the corresponding likelihood
-#         # output encoded z
-#         return self.net(input_)
-        # output z, h, l
-        return z, h_, l
 
-#     def calc_mi(self, x, nu_lambda=1.0):
-#         n_samples, ncov = x.size()
-#         eps = (torch.Tensor( n_samples, self.in_d-ncov).normal_()).to(x.device)
-#         z_ = self.net(torch.cat((x, eps), dim=1))
-        
-#         MI = torch.mean( nu(z_.detach(),nu_lambda=nu_lambda) ) - torch.mean( torch.exp( nu(z_.detach(),nu_lambda=nu_lambda) ) ) 
-#         return -MI
+        return z, h_, l
     
 class Decoder_multiclass(nn.Module):
     def __init__(self, z_dim, n_category, hidden_layer_MNN, hidden_layers=[]):
@@ -159,40 +151,37 @@ class Decoder_VAE(nn.Module):
     
     
 # ref: https://www.ritchievink.com/blog/2019/11/12/another-normalizing-flow-inverse-autoregressive-flows/
-class AutoRegressiveNN(nn.Module):
-    def __init__(self, z_dim=4, h_dim=4, hidden_layers=[32,32]):
-        super(AutoRegressiveNN, self).__init__()
-        self.z_dim = z_dim
-        self.h_dim = h_dim
-        
-        net1 = []
-        hs = [z_dim] + hidden_layers + [z_dim]
-        for h0, h1 in zip(hs, hs[1:]):
-            net1.extend([
-                nn.Linear(h0, h1),
-                nn.ELU(),
-            ])
-        net1.pop()
-        net1 = nn.Sequential(*net1)
-        
-        self.net1 = net1
-        self.net2 = nn.Linear(h_dim, z_dim)
-    
+class AutoRegressiveNN(MADE):
+    def __init__(self, in_features, hidden_features, context_features):
+        super().__init__(in_features, hidden_features)
+        self.context = nn.Linear(context_features, in_features)
+        # remove MADE output layer
+        del self.layers[len(self.layers) - 1]
+
     def forward(self, z, h):
-        return self.net1(z) + self.net2(h)
+        return self.layers(z) + self.context(h)
+    
     
 class IAF_step(nn.Module):
-    def __init__(self, z_dim=4, h_dim=4, hidden_layers=[32,32]):
+    def __init__(self, z_dim=4, h_dim=4, auto_regressive_hidden=32):
         super(IAF_step, self).__init__()
         self.z_dim = z_dim
-        self.s_t = AutoRegressiveNN(z_dim, h_dim, hidden_layers)
-        self.m_t = AutoRegressiveNN(z_dim, h_dim, hidden_layers)
+        self.s_t = AutoRegressiveNN(
+            in_features=z_dim,
+            hidden_features=auto_regressive_hidden,
+            context_features=h_dim,
+        )
+        self.m_t = AutoRegressiveNN(
+            in_features=z_dim,
+            hidden_features=auto_regressive_hidden,
+            context_features=h_dim,
+        )
+#         self._kl_divergence_ = 0
     
     def determine_log_det_jac(self, g_t):
-        # keep dimension
-        return torch.log(g_t+1e-6).sum(1)
+        return torch.log(g_t+1e-6).sum()
     
-    def forward(self, inputs, z_upper_cut=50):
+    def forward(self, inputs):
         if isinstance(inputs, tuple):
             z, h, _kl_divergence_ = inputs
         else:
@@ -203,43 +192,41 @@ class IAF_step(nn.Module):
         g_t = torch.sigmoid(s_t)
         m_t = self.m_t(z,h)        
         
-#         # log |det Jac|
+#         # -log |det Jac|
         self._kl_divergence_ =  _kl_divergence_ - self.determine_log_det_jac(g_t)
 
         # transformation
         new_z = g_t * z + (1 - g_t) * m_t
-        new_z = torch.clamp(new_z, min=-z_upper_cut, max=z_upper_cut)
         # keep input and output the same
         return (new_z, h, self._kl_divergence_)
 
 class IAF(nn.Module):
-    def __init__(self, input_size, z_dim=4, h_dim=4, hidden_layers=[32,32], nstep=5, device='cpu'):
+    def __init__(self, input_size, z_dim=4, h_dim=4, hidden_layers=[32,32], auto_regressive_hidden=32, nstep=5):
         super(IAF, self).__init__()
         # p(z) parameters mu0, logvar0, xi_ and sigma_
         # fix the first part as standard normal
         
-        self.mu0 = torch.zeros(z_dim).to(device)
+        self.mu0 = torch.zeros(z_dim)
 #         self.mu0 = torch.nn.Parameter(mu0)
-        self.logvar0 = torch.zeros(z_dim).to(device)
+        self.logvar0 = torch.zeros(z_dim)
 #         self.logvar0 = torch.nn.Parameter(logvar0)     
         
-        self.xi_ =torch.rand(z_dim).to(device)
+        self.xi_ =torch.rand(z_dim)
         # initialize with standard exponential distribution
 #         self.xi_ = torch.zeros(z_dim)
         self.xi_ = torch.nn.Parameter(self.xi_)
         self.sigma_ = torch.ones(z_dim)
-        self.sigma_ = torch.nn.Parameter(self.sigma_).to(device)
+        self.sigma_ = torch.nn.Parameter(self.sigma_)
         
         # define encoder
         self.encoder = Encoder(in_d = input_size, hidden_layers=hidden_layers, z_dim=z_dim)
         
         # define flow
-        self.flow = torch.nn.Sequential(*[IAF_step(z_dim, h_dim, hidden_layers) for _ in range(nstep)])
+        self.flow = torch.nn.Sequential(*[IAF_step(z_dim, h_dim, auto_regressive_hidden) for _ in range(nstep)])
         
-    def forward(self, x, eps, z_upper_cut=50, lower_bound = -5.0):
+    def forward(self, x, eps = None):
         z_init, h_, l_qzx_init = self.encoder(x, eps)
         best_z, h_, l_qzx = self.flow((z_init, h_, l_qzx_init))
-        best_z = torch.clamp(best_z, min=lower_bound, max=z_upper_cut)
         
         return best_z, l_qzx
 
