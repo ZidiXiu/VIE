@@ -187,7 +187,7 @@ def agrressive_step():
     KL_cond = likelihood_qzx.sum() - likelihood_pz.sum()
     loss = lambda_[0]*CE_loss + lambda_[1]*(z_nu - pz_nu) + lambda_[2]*KL_cond
     loss.backward()
-    torch.nn.utils.clip_grad_norm_(IAF_flow.parameters(), 1e-6)
+    torch.nn.utils.clip_grad_norm_(IAF_flow.parameters(), 1e-4)
     opt_flow.step()
     
     return loss.item()
@@ -335,7 +335,7 @@ if __name__ == "__main__":
                 
                 train_loss += loss.item()
                 if not aggressive_flag:
-                    torch.nn.utils.clip_grad_norm_(IAF_flow.parameters(), 1e-6)
+                    torch.nn.utils.clip_grad_norm_(IAF_flow.parameters(), 1e-4)
                     opt_flow.step()
 
                 opt_dec.step()
