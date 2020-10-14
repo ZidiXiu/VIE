@@ -19,7 +19,7 @@ from sklearn.metrics import precision_recall_curve
 from multiclassification.MonotonicNN_outHz import MyMonotoneNN_3f, MyMonotoneNN_2f
 from utils.distributions import mixed_loglikeli, loglog_function, sample_mixedGPD
 from utils.metrics import cross_entropy, get_predicted_label,  accuracy_per_class
-from model.networks.autoregressive import MADE
+from networks.autoregressive import MADE
 
 class Encoder(nn.Module):
     def __init__(self, in_d, hidden_layers=[32,32], z_dim=4):
@@ -201,21 +201,21 @@ class IAF_step(nn.Module):
         return (new_z, h, self._kl_divergence_)
 
 class IAF(nn.Module):
-    def __init__(self, input_size, z_dim=4, h_dim=4, hidden_layers=[32,32], auto_regressive_hidden=32, nstep=5):
+    def __init__(self, input_size, z_dim=4, h_dim=4, hidden_layers=[32,32], auto_regressive_hidden=32, nstep=5, device='cpu'):
         super(IAF, self).__init__()
         # p(z) parameters mu0, logvar0, xi_ and sigma_
         # fix the first part as standard normal
         
-        self.mu0 = torch.zeros(z_dim)
+        self.mu0 = torch.zeros(z_dim).to(device)
 #         self.mu0 = torch.nn.Parameter(mu0)
-        self.logvar0 = torch.zeros(z_dim)
+        self.logvar0 = torch.zeros(z_dim).to(device)
 #         self.logvar0 = torch.nn.Parameter(logvar0)     
         
-        self.xi_ =torch.rand(z_dim)
+        self.xi_ =torch.rand(z_dim).to(device)
         # initialize with standard exponential distribution
 #         self.xi_ = torch.zeros(z_dim)
         self.xi_ = torch.nn.Parameter(self.xi_)
-        self.sigma_ = torch.ones(z_dim)
+        self.sigma_ = torch.ones(z_dim).to(device)
         self.sigma_ = torch.nn.Parameter(self.sigma_)
         
         # define encoder
